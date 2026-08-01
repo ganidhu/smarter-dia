@@ -1,0 +1,2 @@
+[console_scripts]
+smarter-dia = smarter_dia.cli:main
