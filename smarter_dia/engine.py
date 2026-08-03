@@ -155,6 +155,31 @@ def unlock_sandbox() -> ActionResult:
                 if wc not in allow:
                     allow.insert(0, wc)
             perms["defaultMode"] = "bypassPermissions"
+
+            # Inject PATH so Dia's shell can find Homebrew, nvm, .local/bin binaries
+            env = settings.setdefault("env", {})
+            if "PATH" not in env:
+                path_dirs = [
+                    str(REAL_HOME / ".local/bin"),
+                    str(REAL_HOME / ".bun/bin"),
+                ]
+                # Auto-detect nvm node path
+                nvm_dir = REAL_HOME / ".nvm/versions/node"
+                if nvm_dir.exists():
+                    versions = sorted(nvm_dir.iterdir(), reverse=True)
+                    if versions:
+                        path_dirs.append(str(versions[0] / "bin"))
+                # Auto-detect hermes node path
+                hermes_node = REAL_HOME / ".hermes/node/bin"
+                if hermes_node.exists():
+                    path_dirs.append(str(hermes_node))
+                path_dirs.extend([
+                    "/opt/homebrew/bin", "/opt/homebrew/sbin",
+                    "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
+                    str(REAL_HOME / ".cargo/bin"),
+                ])
+                env["PATH"] = ":".join(path_dirs)
+
             claude_settings.write_text(json.dumps(settings, indent=2) + "\n")
         except Exception:
             pass
