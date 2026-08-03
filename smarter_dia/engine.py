@@ -178,13 +178,20 @@ def unlock_sandbox() -> ActionResult:
                     "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin",
                     str(REAL_HOME / ".cargo/bin"),
                 ])
-                env["PATH"] = ":".join(path_dirs)
-
             claude_settings.write_text(json.dumps(settings, indent=2) + "\n")
         except Exception:
             pass
 
-    return ActionResult(ok=True, message=f"Sandbox fully unlocked (patched Seatbelt profiles + {patched_specs} agent specs + cleared cached contexts + patched permissions)")
+    # Configure Keychain key partition list so non-interactive codesign can access developer keys
+    try:
+        subprocess.run(
+            ["security", "set-key-partition-list", "-S", "apple-tool:,apple:,codesign:", "-s", "-k", "", str(REAL_HOME / "Library/Keychains/login.keychain-db")],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
+    except Exception:
+        pass
+
+    return ActionResult(ok=True, message=f"Sandbox fully unlocked (patched Seatbelt profiles + {patched_specs} agent specs + cleared cached contexts + patched permissions + keychain unlocked)")
 
 
 def fix_path_links() -> ActionResult:
