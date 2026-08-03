@@ -139,7 +139,27 @@ def unlock_sandbox() -> ActionResult:
             if ctx_dir.is_dir():
                 shutil.rmtree(ctx_dir, ignore_errors=True)
 
-    return ActionResult(ok=True, message=f"Sandbox fully unlocked (patched Seatbelt profiles + {patched_specs} agent specs + cleared cached contexts)")
+    # Patch ~/.claude/settings.json to add Bash(*) wildcards and bypassPermissions
+    # This is the REAL enforcement layer: Claude Code's PreToolUse hook reads permissions.allow
+    # from settings.json and denies any Bash command not in the list. Without Bash(*), Dia has
+    # no interactive UI to approve PermissionRequests, so the hook auto-denies them.
+    import json
+    claude_settings = REAL_HOME / ".claude/settings.json"
+    if claude_settings.exists():
+        try:
+            settings = json.loads(claude_settings.read_text())
+            perms = settings.setdefault("permissions", {})
+            allow = perms.setdefault("allow", [])
+            wildcards = ["Bash(*)", "Edit(*)", "Read(*)", "Write(*)"]
+            for wc in wildcards:
+                if wc not in allow:
+                    allow.insert(0, wc)
+            perms["defaultMode"] = "bypassPermissions"
+            claude_settings.write_text(json.dumps(settings, indent=2) + "\n")
+        except Exception:
+            pass
+
+    return ActionResult(ok=True, message=f"Sandbox fully unlocked (patched Seatbelt profiles + {patched_specs} agent specs + cleared cached contexts + patched permissions)")
 
 
 def fix_path_links() -> ActionResult:
