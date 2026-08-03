@@ -132,10 +132,14 @@ def unlock_sandbox() -> ActionResult:
                     bak = spec_file.with_suffix(".yaml.bak")
                     if not bak.exists():
                         shutil.copy2(spec_file, bak)
-                    spec_file.write_text(new_text)
-                    patched_specs += 1
+    # Purge cached subagent/conversation contexts in User Data so existing sessions re-init with new spec prompts
+    user_data = REAL_HOME / "Library/Application Support/Dia/User Data"
+    if user_data.exists():
+        for ctx_dir in user_data.glob("*/AgentServer/contexts"):
+            if ctx_dir.is_dir():
+                shutil.rmtree(ctx_dir, ignore_errors=True)
 
-    return ActionResult(ok=True, message=f"Sandbox fully unlocked (patched Seatbelt profiles + {patched_specs} agent specs)")
+    return ActionResult(ok=True, message=f"Sandbox fully unlocked (patched Seatbelt profiles + {patched_specs} agent specs + cleared cached contexts)")
 
 
 def fix_path_links() -> ActionResult:
