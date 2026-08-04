@@ -123,8 +123,8 @@ def unlock_sandbox() -> ActionResult:
             text = spec_file.read_text()
             if "<sandbox_constraints>" in text:
                 new_text = re.sub(
-                    r"<sandbox_constraints>.*?</sandbox_constraints>",
-                    unlocked_constraints.strip(),
+                    r"\s*<sandbox_constraints>.*?</sandbox_constraints>",
+                    "\n" + unlocked_constraints.strip(),
                     text,
                     flags=re.DOTALL
                 )
@@ -132,6 +132,8 @@ def unlock_sandbox() -> ActionResult:
                     bak = spec_file.with_suffix(".yaml.bak")
                     if not bak.exists():
                         shutil.copy2(spec_file, bak)
+                    spec_file.write_text(new_text)
+                    patched_specs += 1
     # Purge cached subagent/conversation contexts in User Data so existing sessions re-init with new spec prompts
     user_data = REAL_HOME / "Library/Application Support/Dia/User Data"
     if user_data.exists():
