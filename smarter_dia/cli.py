@@ -8,9 +8,12 @@ from __future__ import annotations
 
 import os
 import random
+import shutil
+import subprocess
 import sys
 import textwrap
 import time
+from pathlib import Path
 from typing import Optional
 
 from smarter_dia import __version__
@@ -588,6 +591,66 @@ def cmd_restore_defaults() -> None:
     print()
 
 
+def cmd_about() -> None:
+    print(f"\n  {BOLD}{CYAN}SMARTER·DIA  v{__version__}{RESET}")
+    print(f"  {CYAN}──────────────────────────────────────────────{RESET}")
+    print("  CLI to unlock and supercharge Dia AI Browser's agent capabilities.")
+    print("\n  • Unlocks macOS Seatbelt sandbox profiles (full shell/exec)")
+    print("  • Fixes PATH — symlinks bundled binaries into /usr/local/bin")
+    print("  • Syncs your AGY skills into Dia's agent resources")
+    print("  • Injects path rules + AGENTS.md persona into Dia's system prompt")
+    print("  • Auto-backups every change; restores instantly if Dia misbehaves")
+    print(f"\n  {BOLD}Author:{RESET} ganidhu")
+    print(f"  {BOLD}License:{RESET} MIT")
+    print(f"  {BOLD}Source:{RESET} https://github.com/ganidhu/smarter-dia")
+    print(f"  {BOLD}Install:{RESET} brew install ganidhu/smarter-dia/smarter-dia\n")
+    sys.exit(0)
+
+
+def _brew_installed() -> bool:
+    tap = subprocess.run(["brew", "list", "--versions", "smarter-dia"], capture_output=True, text=True)
+    return tap.returncode == 0
+
+
+def cmd_update() -> None:
+    print(f"\n  {CYAN}Updating smarter-dia…{RESET}")
+    if shutil.which("brew") and _brew_installed():
+        print(f"  {DIM}Upgrading via Homebrew tap…{RESET}")
+        subprocess.run(["brew", "update"], check=False)
+        subprocess.run(["brew", "upgrade", "ganidhu/smarter-dia/smarter-dia"], check=False)
+    else:
+        root = Path(__file__).resolve().parent.parent
+        if (root / "pyproject.toml").exists():
+            print(f"  {DIM}Reinstalling from local source…{RESET}")
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "-e", str(root), "--break-system-packages"],
+                check=False,
+            )
+        else:
+            print(f"  {DIM}Running pip install --upgrade…{RESET}")
+            subprocess.run(
+                [sys.executable, "-m", "pip", "install", "--upgrade", "smarter-dia", "--break-system-packages"],
+                check=False,
+            )
+    print(f"  {GREEN}Update complete!{RESET}\n")
+    sys.exit(0)
+
+
+def cmd_uninstall() -> None:
+    print(f"\n  {CYAN}Uninstalling smarter-dia…{RESET}")
+    if shutil.which("brew") and _brew_installed():
+        print(f"  {DIM}Uninstalling via Homebrew…{RESET}")
+        subprocess.run(["brew", "uninstall", "smarter-dia"], check=False)
+    else:
+        print(f"  {DIM}Running pip uninstall…{RESET}")
+        subprocess.run(
+            [sys.executable, "-m", "pip", "uninstall", "smarter-dia", "-y", "--break-system-packages"],
+            check=False,
+        )
+    print(f"  {GREEN}Successfully uninstalled!{RESET}\n")
+    sys.exit(0)
+
+
 def cmd_help() -> None:
     print(f"\n  {BOLD}{CMD}{RESET}  —  Dia AI Intelligence & Sandbox Supercharger  v{__version__}")
     print(f"\n  {CYAN}Usage:{RESET}")
@@ -603,6 +666,9 @@ def cmd_help() -> None:
     print(f"    {CMD} sync-skills       Sync AGY skills into Dia")
     print(f"    {CMD} append-prompt     Append path override & persona to chat-base.md")
     print(f"    {CMD} restore           Restore Dia factory defaults from snapshot")
+    print(f"    {CMD} --about           Show project info")
+    print(f"    {CMD} --update          Upgrade / reinstall")
+    print(f"    {CMD} --uninstall       Remove the package")
     print(f"    {CMD} --help            Show this message")
     print(f"    {CMD} --version         Show version\n")
     print(f"  {DIM}Also works as: smarter dia [command]{RESET}\n")
@@ -652,6 +718,15 @@ def main(argv: list[str] | None = None) -> None:
         "help":           cmd_help,
         "--version":      cmd_version,
         "-v":             cmd_version,
+        "--about":        cmd_about,
+        "-about":         cmd_about,
+        "about":          cmd_about,
+        "--update":       cmd_update,
+        "-update":        cmd_update,
+        "update":         cmd_update,
+        "--uninstall":    cmd_uninstall,
+        "-uninstall":     cmd_uninstall,
+        "uninstall":      cmd_uninstall,
     }
 
     fn = dispatch.get(arg)
