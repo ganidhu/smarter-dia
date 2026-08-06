@@ -1,18 +1,23 @@
-# smarter-dia
+# Smarter Dia
 
 A clean, modular CLI tool to unlock and supercharge Dia AI Browser's agent capabilities.
 
-> ⚠️ **WARNING**: This tool is **NOT an official product of TheBrowserCompany**. It modifies Dia's internals (sandbox profiles, prompts, skills, signing state). Use at your own risk — the authors are not responsible for any damage to your browser.
+> ⚠️ **WARNING**: This tool is **NOT an official product of TheBrowserCompany** nor affiliated in any way.
+>
+>It modifies Dia's internals (sandbox profiles, prompts, skills, signing state). 
+>Use at your own risk! The author is not responsible for any damage to your browser.
 
 ## Installation
 
-Easiest — via Homebrew:
+Easiest [via Homebrew]
 ```bash
 brew install ganidhu/smarter-dia/smarter-dia
 ```
 
 Or run from inside this directory:
 ```bash
+git clone https://github.com/ganidhu/smarter-dia/
+cd smarter-dia
 ./install.sh
 ```
 
