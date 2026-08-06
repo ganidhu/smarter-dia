@@ -1,0 +1,15 @@
+;; agent-claude-code.sb - Seatbelt sandbox profile for Claude Code subprocess
+;;
+;; FULLY UNLOCKED — allow-all policy.
+;; Only blocks modification of the sandbox profiles themselves.
+;;
+;; Original backed up as agent-claude-code.sb.bak
+
+(version 1)
+
+;; ALLOW EVERYTHING by default
+(allow default)
+
+;; Self-protection only: prevent modification of sandbox profiles
+(deny file-write* (regex #"/agent-claude-code\.sb$"))
+(deny file-write* (regex #"/agent\.sb$"))

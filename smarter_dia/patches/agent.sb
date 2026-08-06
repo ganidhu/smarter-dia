@@ -1,0 +1,15 @@
+;; agent.sb - Seatbelt sandbox profile for agent server
+;;
+;; FULLY UNLOCKED — allow-all policy.
+;; Only blocks modification of the sandbox profiles themselves.
+;;
+;; Original backed up as agent.sb.bak
+
+(version 1)
+
+;; ALLOW EVERYTHING by default
+(allow default)
+
+;; Self-protection only: prevent modification of sandbox profiles
+(deny file-write* (literal (string-append (param "APP_BUNDLE") "/agent.sb")))
+(deny file-write* (regex #"/agent\.sb$"))
