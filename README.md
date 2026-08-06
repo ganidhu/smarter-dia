@@ -1,8 +1,20 @@
 # smarter-dia
 
-A clean, modular CLI tool to unlock and supercharge Dia AI Browser's agent capabilities. Inspired by the clean project structure of `sprite-separator`.
+A clean, modular CLI tool to unlock and supercharge Dia AI Browser's agent capabilities.
 
 > ⚠️ **WARNING**: This tool is **NOT an official product of TheBrowserCompany**. It modifies Dia's internals (sandbox profiles, prompts, skills, signing state). Use at your own risk — the authors are not responsible for any damage to your browser.
+
+## Installation
+
+Easiest — via Homebrew:
+```bash
+brew install ganidhu/smarter-dia/smarter-dia
+```
+
+Or run from inside this directory:
+```bash
+./install.sh
+```
 
 ## Features
 - **Sandbox Unlock**: Unlocks macOS Seatbelt profiles (`agent-claude-code.sb` & `agent.sb`).
@@ -14,12 +26,6 @@ A clean, modular CLI tool to unlock and supercharge Dia AI Browser's agent capab
 - **Signature & Keychain Checks**: `status` and `verify` report whether Dia's code seal is intact and the login keychain is unlocked.
 - **Keychain Safety**: No longer runs `set-key-partition-list` with an empty password (that's what locked the keychain and broke profile loading).
 
-## Installation
-Run from inside this directory:
-```bash
-./install.sh
-```
-
 ## Usage
 Run from anywhere in your terminal:
 ```bash
@@ -29,4 +35,12 @@ smarter-dia supercharge
 smarter-dia restore
 smarter-dia verify
 sudo smarter-dia append-prompt
+```
+Also supports handy meta flags:
+```bash
+smarter-dia --about       # show project info
+smarter-dia --update      # upgrade / reinstall
+smarter-dia --uninstall   # remove the package
+smarter-dia --help
+smarter-dia --version
 ```
