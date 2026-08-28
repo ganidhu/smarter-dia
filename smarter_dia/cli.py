@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import os
 import random
+import re
+import select
 import shutil
 import subprocess
 import sys
+import termios
 import textwrap
 import time
+import tty
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -26,6 +31,7 @@ from smarter_dia.engine import (
     fix_path_links,
     keychain_status,
     list_snapshots,
+    restore_defaults,
     restore_snapshot,
     sync_skills,
     unlock_keychain,
@@ -65,6 +71,16 @@ DISCLAIMER = (
 def wrap(text: str, width: int = 74) -> list[str]:
     """Word-wrap a plain string into lines at word boundaries."""
     return textwrap.wrap(" ".join(str(text).split()), width=width) or [""]
+
+
+def _join_english(parts: list[str]) -> str:
+    if not parts:
+        return ""
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return f"{parts[0]} and {parts[1]}"
+    return f"{', '.join(parts[:-1])}, and {parts[-1]}"
 
 def print_wrapped(text: str, indent: int = 0, width: int = 74, style: str = "") -> None:
     """Print text wrapped, applying style to every line, with a hanging indent."""
@@ -133,6 +149,37 @@ def show_logo_loader(duration: float = 2.6, statuses: tuple[str, ...] = ("Render
     print("\n".join(f"  {CYAN}{ln}{RESET}" for ln in lines))
     print(f"{status_line('Ready', '✔', ok=True)}")
     print()
+
+
+def show_fill_bar(width: int = 56, duration: float = 0.85, animate: bool = True) -> None:
+    indent = "  "
+
+    def frame(n: int, done: bool = False) -> str:
+        n = max(0, min(width, n))
+        if done or n >= width:
+            return f"{indent}{CYAN}{'━' * width}{RESET}"
+        body = max(0, n - 1)
+        head = "━" if n else ""
+        return (
+            f"{indent}{CYAN}{'━' * body}{RESET}"
+            f"{BOLD}{MAGENTA}{head}{RESET}"
+            f"{DIM}{'-' * (width - n)}{RESET}"
+        )
+
+    if not animate or not sys.stdout.isatty():
+        print(frame(width, done=True))
+        print()
+        return
+
+    steps = 38
+    for i in range(steps + 1):
+        t = i / steps
+        eased = 1.0 - (1.0 - t) ** 3
+        print(f"\r{frame(int(round(width * eased)))}", end="", flush=True)
+        time.sleep(duration / steps)
+    print(f"\r{frame(width, done=True)}")
+    print()
+
 
 # ─── UI Primitives ────────────────────────────────────────────────────────────
 
@@ -228,11 +275,362 @@ def print_status_panel(r: CheckResult) -> None:
         tick(f"{name:<12}", bool(path), path or "not found")
 
 
+@dataclass(frozen=True)
+class MenuItem:
+    key: str
+    label: str
+    blurb: str = ""
+    tooltip: str = ""
+    risk: str = ""
+    tag: str = ""
+
+
+MENU_ITEMS = (
+    MenuItem(
+        key="1",
+        label="Supercharge Dia",
+        blurb="unlock + path + skills + prompt (full run)",
+        tooltip=(
+            "Full upgrade: snapshot → sandbox unlock → PATH links → AGY skills → "
+            "prompt & persona. Restart Dia with Cmd+Q when it finishes. A snapshot "
+            "is taken first so you can roll back."
+        ),
+        risk="sudo · breaks signature · reversible",
+    ),
+    MenuItem(
+        key="2",
+        label="Unlock sandbox only",
+        tooltip=(
+            "Replaces agent-claude-code.sb, agent.sb, and sandbox-constraints.md "
+            "so the agent can exec a full shell. Rewrites spec.yaml blocks and "
+            "clears cached AgentServer contexts."
+        ),
+        risk="sudo · breaks signature · reversible",
+        tag="recommended",
+    ),
+    MenuItem(
+        key="3",
+        label="Fix binary PATH links",
+        tooltip=(
+            "Symlinks yt-dlp, ffmpeg, python3, node, bun, git, uv, and gh into "
+            "/usr/local/bin so Dia's agent can find them. Restore unlinks the ones "
+            "this tool created."
+        ),
+        risk="sudo · reversible",
+    ),
+    MenuItem(
+        key="4",
+        label="Sync AGY skills into Dia",
+        tooltip=(
+            "Copies ~/.agents/skills into Dia's prompts/skills. Original Dia "
+            "skills are left alone; only extra AGY folders are added or replaced."
+        ),
+        risk="sudo · reversible",
+    ),
+    MenuItem(
+        key="5",
+        label="Inject prompt rules & persona",
+        tooltip=(
+            "Appends a /Users/ganidhu path override and your AGENTS.md persona to "
+            "the end of chat-base.md without overwriting existing prompt text."
+        ),
+        risk="sudo · reversible",
+    ),
+    MenuItem(
+        key="6",
+        label="View full status",
+        tooltip=(
+            "Read-only diagnostic: code signature, login keychain, snapshots, "
+            "sandbox unlock, prompt injects, skill count, and binaries on PATH. "
+            "Makes no changes."
+        ),
+        risk="read-only",
+    ),
+    MenuItem(
+        key="7",
+        label="Backup current state",
+        tooltip=(
+            "Copies every managed file, the current skills list, PATH links, and "
+            "agent spec.yamls into ~/.smarter-dia/backups/. Does not modify Dia."
+        ),
+        risk="safe · no Dia writes",
+    ),
+    MenuItem(
+        key="8",
+        label="Restore from snapshot",
+        tooltip=(
+            "Reverts managed files, synced skills, and PATH links from a snapshot, "
+            "then re-checks Dia's code signature. Next screen: Enter = baseline."
+        ),
+        risk="reverts changes",
+    ),
+    MenuItem(
+        key="9",
+        label="Unlock login keychain",
+        tooltip=(
+            "Unlocks the login keychain so Dia can load profiles. Does not patch "
+            "Dia files. If it needs a password, you get the exact command to run."
+        ),
+        risk="no Dia writes",
+    ),
+    MenuItem(
+        key="0",
+        label="Restore Dia factory defaults",
+        tooltip=(
+            "Restores the baseline snapshot and reverts every smarter-dia change "
+            "(sandbox, PATH links, skills, prompt). Stronger than a named restore."
+        ),
+        risk="reverts ALL changes",
+    ),
+    MenuItem(
+        key="q",
+        label="Quit",
+        tooltip="Leave the menu. Nothing is changed.",
+        risk="no changes",
+    ),
+)
+
+_ANSI_RE = re.compile(r"(?:\033\[[0-9;?]*[A-Za-z])|(?:\033\]8;;.*?(?:\033\\|\x07))")
+_SGR_MOUSE_RE = re.compile(rb"\x1b\[<(\d+);(\d+);(\d+)([Mm])")
+_DSR_RE = re.compile(rb"\x1b\[(\d+);(\d+)R")
+
+
+def _vis_len(text: str) -> int:
+    return len(_ANSI_RE.sub("", text))
+
+
+def _pad_vis(text: str, width: int) -> str:
+    extra = width - _vis_len(text)
+    return text if extra <= 0 else text + (" " * extra)
+
+
+def _tooltip_box(item: MenuItem, width: int) -> list[str]:
+    box_w = width - 2
+    inner = max(40, box_w - 4)
+    title = f" {item.label} "
+    risk_plain = f" {item.risk} " if item.risk else ""
+    fill = box_w - 2 - len(title) - len(risk_plain)
+    if fill < 1:
+        risk_plain = ""
+        fill = max(1, box_w - 2 - len(title))
+    if risk_plain:
+        color = YELLOW if ("breaks signature" in item.risk or "ALL" in item.risk) else GREEN if ("read-only" in item.risk or "no " in item.risk or "safe" in item.risk) else DIM
+        risk_bit = f"{color}{risk_plain}{RESET}"
+    else:
+        risk_bit = ""
+    top = f"{CYAN}┌{RESET}{BOLD}{title}{RESET}{CYAN}{'─' * fill}{RESET}{risk_bit}{CYAN}┐{RESET}"
+    body: list[str] = []
+    for para in item.tooltip.split("\n"):
+        body.extend(wrap(para, width=inner) if para.strip() else [""])
+    while len(body) < 3:
+        body.append("")
+    body = body[:3]
+    lines = [f"  {top}"]
+    for ln in body:
+        lines.append(f"  {CYAN}│{RESET} {_pad_vis(ln, inner)} {CYAN}│{RESET}")
+    lines.append(f"  {CYAN}└{'─' * (box_w - 2)}┘{RESET}")
+    return lines
+
+
+def _tag_bit(item: MenuItem) -> str:
+    if not item.tag:
+        return ""
+    return f"  {GREEN}{item.tag}{RESET}"
+
+
+def _menu_item_line(item: MenuItem, selected: bool, width: int) -> str:
+    key = f"[{item.key}]"
+    tag = _tag_bit(item)
+    if selected:
+        core = f"▸ {key}  {item.label}"
+        if item.blurb:
+            core += f"  — {item.blurb}"
+        line = f"  {BOLD}{CYAN}{core}{RESET}{tag}"
+    else:
+        core = f"  {BOLD}{key}{RESET}  {item.label}"
+        if item.blurb:
+            core += f"  {DIM}— {item.blurb}{RESET}"
+        line = f"  {core}{tag}"
+    return _pad_vis(line, width)
+
+
+def _draw_menu_frame(items: tuple[MenuItem, ...], index: int, width: int) -> int:
+    box = _tooltip_box(items[index], width)
+    for i, item in enumerate(items):
+        print(_menu_item_line(item, i == index, width))
+    print()
+    for ln in box:
+        print(ln)
+    print()
+    print(f"  {DIM}↑/↓ or hover for details  ·  Enter or click to run  ·  q to quit{RESET}")
+    sys.stdout.write("\033[J")
+    sys.stdout.flush()
+    return len(items) + 3 + len(box)
+
+
+def _menu_interactive_ok() -> bool:
+    return bool(sys.stdin.isatty() and sys.stdout.isatty())
+
+
+def _query_cursor_row(fd: int) -> tuple[Optional[int], bytes]:
+    sys.stdout.write("\033[6n")
+    sys.stdout.flush()
+    buf = bytearray()
+    deadline = time.time() + 0.2
+    while time.time() < deadline:
+        wait = max(0.0, deadline - time.time())
+        ready, _, _ = select.select([fd], [], [], wait)
+        if not ready:
+            break
+        chunk = os.read(fd, 64)
+        if not chunk:
+            break
+        buf.extend(chunk)
+        m = _DSR_RE.search(bytes(buf))
+        if m:
+            leftover = bytes(buf)[m.end():]
+            return int(m.group(1)), leftover
+    return None, bytes(buf)
+
+
+def _parse_event(buf: bytearray) -> Optional[tuple]:
+    if not buf:
+        return None
+    if buf[0] != 0x1B:
+        ch = bytes([buf.pop(0)]).decode("utf-8", errors="ignore")
+        if ch in ("\r", "\n"):
+            return ("confirm",)
+        if ch in ("q", "Q"):
+            return ("select", "q")
+        if ch in ("k", "K"):
+            return ("move", -1)
+        if ch in ("j", "J"):
+            return ("move", 1)
+        if ch in "0123456789":
+            return ("select", ch)
+        return None
+    raw = bytes(buf)
+    if raw.startswith(b"\x1b[<"):
+        m = _SGR_MOUSE_RE.match(raw)
+        if not m:
+            return None
+        del buf[: m.end()]
+        btn, x, y, kind = int(m.group(1)), int(m.group(2)), int(m.group(3)), m.group(4)
+        if kind == b"M" and btn == 0:
+            return ("click", x, y)
+        if btn in (32, 33, 34, 35, 64, 65) or (kind == b"M" and btn >= 32):
+            return ("hover", x, y)
+        return None
+    if raw.startswith(b"\x1b[A") or raw.startswith(b"\x1bOA"):
+        del buf[:3]
+        return ("move", -1)
+    if raw.startswith(b"\x1b[B") or raw.startswith(b"\x1bOB"):
+        del buf[:3]
+        return ("move", 1)
+    if raw.startswith(b"\x1b[H") or raw.startswith(b"\x1b[F"):
+        del buf[:3]
+        return ("edge", 0 if raw.startswith(b"\x1b[H") else -1)
+    if len(raw) >= 2 and raw[1] not in (0x5B, 0x4F):
+        del buf[0]
+        return ("select", "q")
+    if len(raw) > 32:
+        del buf[0]
+    return None
+
+
+def pick_from_menu(items: tuple[MenuItem, ...] = MENU_ITEMS) -> Optional[str]:
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    index = 0
+    width = min(76, max(56, shutil.get_terminal_size().columns - 4))
+    start_row = None
+    buf = bytearray()
+    try:
+        tty.setcbreak(fd)
+        sys.stdout.write("\033[?25l\033[?1000h\033[?1003h\033[?1006h")
+        sys.stdout.flush()
+        row, leftover = _query_cursor_row(fd)
+        start_row = row
+        if leftover:
+            buf.extend(leftover)
+        if start_row:
+            sys.stdout.write(f"\033[{start_row};1H")
+        frame_h = _draw_menu_frame(items, index, width)
+        n = len(items)
+        while True:
+            ready, _, _ = select.select([fd], [], [], 0.12)
+            if ready:
+                chunk = os.read(fd, 256)
+                if not chunk:
+                    break
+                buf.extend(chunk)
+            if len(buf) > 512:
+                buf.clear()
+            if buf == bytearray(b"\x1b"):
+                more, _, _ = select.select([fd], [], [], 0.05)
+                if more:
+                    buf.extend(os.read(fd, 256))
+                elif buf == bytearray(b"\x1b"):
+                    buf.clear()
+                    return "q"
+            event = _parse_event(buf)
+            if event is None:
+                if buf and not bytes(buf).startswith(b"\x1b"):
+                    buf.pop(0)
+                continue
+            etype = event[0]
+            changed = False
+            if etype == "move":
+                index = (index + event[1]) % n
+                changed = True
+            elif etype == "edge":
+                index = 0 if event[1] == 0 else n - 1
+                changed = True
+            elif etype in ("hover", "click"):
+                y = event[2]
+                if start_row and start_row <= y < start_row + n:
+                    new_index = y - start_row
+                    if new_index != index:
+                        index = new_index
+                        changed = True
+                    if etype == "click":
+                        return items[index].key
+            elif etype == "confirm":
+                return items[index].key
+            elif etype == "select":
+                return event[1]
+            if changed:
+                width = min(76, max(56, shutil.get_terminal_size().columns - 4))
+                if start_row:
+                    sys.stdout.write(f"\033[{start_row};1H")
+                else:
+                    sys.stdout.write(f"\033[{frame_h}A")
+                frame_h = _draw_menu_frame(items, index, width)
+    except (termios.error, OSError):
+        return None
+    finally:
+        sys.stdout.write("\033[?1000l\033[?1003l\033[?1006l\033[?25h")
+        sys.stdout.flush()
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+    return None
+
+
+def _print_static_menu(items: tuple[MenuItem, ...] = MENU_ITEMS) -> None:
+    for item in items:
+        line = f"    {BOLD}[{item.key}]{RESET}  {BOLD}{item.label}{RESET}" if item.key == "1" else f"    {BOLD}[{item.key}]{RESET}  {item.label}"
+        if item.blurb:
+            line += f"  {DIM}— {item.blurb}{RESET}"
+        line += _tag_bit(item)
+        print(line)
+    print()
+
+
 # ─── Interactive pipeline (the default experience) ────────────────────────────
 
 def run_pipeline() -> None:
     """Full interactive menu — loops until user quits."""
     show_logo_loader()
+    first = True
     while True:
         print(CLEAR)
         banner()
@@ -252,31 +650,29 @@ def run_pipeline() -> None:
         elif all_good:
             print(f"  {GREEN}{BOLD}✨  Dia is supercharged, but signature is {_bool_label(r.signature_valid)}{RESET}\n")
         else:
-            missing = []
+            bits = []
             if not (r.sandbox_cc_unlocked and r.sandbox_as_unlocked and r.prompt_unlocked):
-                missing.append("sandbox unlocked")
+                bits.append("the sandbox is still locked")
             if not r.path_override_injected or not r.persona_injected:
-                missing.append("prompt injected")
+                bits.append("prompt rules aren't injected yet")
             if r.signature_valid is False:
-                missing.append("code signature (run restore)")
+                bits.append("the code signature is invalid")
             if r.keychain_ok is False:
-                missing.append("login keychain locked (run unlock)")
-            print(f"  {YELLOW}⚡  Not fully supercharged — missing: {', '.join(missing)}{RESET}\n")
+                bits.append("the login keychain is locked")
+            detail = _join_english(bits)
+            detail = detail[0].upper() + detail[1:] + "."
+            print(f"  {YELLOW}⚡  {BOLD}Not fully supercharged yet{RESET}")
+            print(f"  {YELLOW}   {detail}{RESET}\n")
 
-        print(f"    {BOLD}[1]{RESET}  {BOLD}Supercharge Dia{RESET}  {DIM}— unlock + path + skills + prompt (full run){RESET}")
-        print(f"    {BOLD}[2]{RESET}  Unlock sandbox only")
-        print(f"    {BOLD}[3]{RESET}  Fix binary PATH links")
-        print(f"    {BOLD}[4]{RESET}  Sync AGY skills into Dia")
-        print(f"    {BOLD}[5]{RESET}  Inject prompt rules & persona")
-        print(f"    {BOLD}[6]{RESET}  View full status")
-        print(f"    {BOLD}[7]{RESET}  Backup current state")
-        print(f"    {BOLD}[8]{RESET}  Restore from snapshot")
-        print(f"    {BOLD}[9]{RESET}  Unlock login keychain")
-        print(f"    {BOLD}[0]{RESET}  Restore Dia factory defaults")
-        print(f"    {BOLD}[q]{RESET}  Quit")
-        print()
+        show_fill_bar(animate=first)
+        first = False
 
-        choice = input("  Select option: ").strip().lower()
+        choice = None
+        if _menu_interactive_ok():
+            choice = pick_from_menu(MENU_ITEMS)
+        if choice is None:
+            _print_static_menu(MENU_ITEMS)
+            choice = _prompt("  Select option: ").strip().lower()
         print()
 
         if choice == "1":
