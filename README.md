@@ -11,6 +11,8 @@ Easiest — via Homebrew:
 brew install ganidhu/smarter-dia/smarter-dia
 ```
 
+If you get stuck, see [How do I install smarter-dia?](https://github.com/ganidhu/smarter-dia/discussions/2).
+
 Or run from inside this directory:
 ```bash
 ./install.sh
