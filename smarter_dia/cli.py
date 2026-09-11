@@ -23,6 +23,7 @@ from typing import Optional
 
 from smarter_dia import __version__
 from smarter_dia.engine import (
+    APP_MANAGEMENT_MESSAGE,
     ActionResult,
     CheckResult,
     append_prompt_rules,
@@ -33,6 +34,7 @@ from smarter_dia.engine import (
     list_snapshots,
     restore_defaults,
     restore_snapshot,
+    supercharge,
     sync_skills,
     unlock_keychain,
     unlock_sandbox,
@@ -236,6 +238,30 @@ def show_result(r: ActionResult) -> None:
     if r.detail:
         for line in r.detail.splitlines():
             print(f"  {DIM}   {line}{RESET}")
+
+
+def print_app_management_warning() -> None:
+    print(f"  {YELLOW}⚠  macOS needs App Management permission to let this tool edit Dia.app.{RESET}")
+    print(f"  {YELLOW}   System Settings > Privacy & Security > App Management, turn it ON{RESET}")
+    print(f"  {YELLOW}   for your terminal, then re-run with sudo. Quit Dia first.{RESET}")
+    print()
+
+
+def offer_open_app_management() -> None:
+    if _prompt(f"  Open System Settings to App Management now? [y/N]: ").strip().lower() != "y":
+        return
+    try:
+        subprocess.run(["open", "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AppManagement"], check=False)
+    except Exception:
+        print(f"  {DIM}Could not open Settings automatically. Open it manually.{RESET}")
+
+
+def handle_bundle_result(r: ActionResult) -> None:
+    show_result(r)
+    if not r.ok and r.message == APP_MANAGEMENT_MESSAGE:
+        print()
+        offer_open_app_management()
+    print()
 
 
 def _bool_label(v, ok_label="OK", bad_label="ISSUE"):
@@ -696,7 +722,7 @@ def run_pipeline() -> None:
                 input(f"\n  {DIM}Press Enter to continue…{RESET}")
             else:
                 loader("Patching Seatbelt sandbox profiles…")
-                show_result(unlock_sandbox())
+                handle_bundle_result(unlock_sandbox())
                 input(f"\n  {DIM}Press Enter to continue…{RESET}")
 
         elif choice == "3":
@@ -720,7 +746,7 @@ def run_pipeline() -> None:
                 input(f"\n  {DIM}Press Enter to continue…{RESET}")
             else:
                 loader("Copying AGY skills into Dia…", loops=3)
-                show_result(sync_skills())
+                handle_bundle_result(sync_skills())
                 input(f"\n  {DIM}Press Enter to continue…{RESET}")
 
         elif choice == "5":
@@ -732,7 +758,7 @@ def run_pipeline() -> None:
                 input(f"\n  {DIM}Press Enter to continue…{RESET}")
             else:
                 loader("Appending rules to chat-base.md…")
-                show_result(append_prompt_rules())
+                handle_bundle_result(append_prompt_rules())
                 input(f"\n  {DIM}Press Enter to continue…{RESET}")
 
         elif choice == "6":
@@ -781,26 +807,30 @@ def run_pipeline() -> None:
 
 
 def _run_supercharge() -> None:
-    """Guided 4-step full supercharge — called from pipeline or direct command."""
-    step(1, 5, "Snapshot current state (safe rollback point)")
-    loader("Snapshotting…")
-    show_result(create_snapshot("pre-supercharge"))
+    """Guided full supercharge — called from pipeline or direct command."""
+    labels = {
+        "snapshot": "Snapshot current state (safe rollback point)",
+        "unlock-sandbox": "Unlock Dia's Seatbelt sandbox",
+        "path-links": "Fix PATH — symlink binaries to /usr/local/bin",
+        "sync-skills": "Sync your AGY skills into Dia",
+        "append-prompt": "Append path rules & persona to Dia's system prompt",
+    }
+    loaders = {
+        "snapshot": "Snapshotting…",
+        "unlock-sandbox": "Patching sandbox profiles…",
+        "path-links": "Linking binaries…",
+        "sync-skills": "Copying skills…",
+        "append-prompt": "Appending to chat-base.md…",
+    }
 
-    step(2, 5, "Unlock Dia's Seatbelt sandbox")
-    loader("Patching sandbox profiles…")
-    show_result(unlock_sandbox())
+    def on_step(index: int, name: str) -> None:
+        step(index, 5, labels.get(name, name))
+        loader(loaders.get(name, name), loops=3 if name == "sync-skills" else 2)
 
-    step(3, 5, "Fix PATH — symlink binaries to /usr/local/bin")
-    loader("Linking binaries…")
-    show_result(fix_path_links())
-
-    step(4, 5, "Sync your AGY skills into Dia")
-    loader("Copying skills…", loops=3)
-    show_result(sync_skills())
-
-    step(5, 5, "Append path rules & persona to Dia's system prompt")
-    loader("Appending to chat-base.md…")
-    show_result(append_prompt_rules())
+    result = supercharge(on_step=on_step)
+    handle_bundle_result(result)
+    if not result.ok:
+        return
 
     print(f"\n  {GREEN}{BOLD}✨  Done! Restart Dia (Cmd+Q → reopen) to load all changes.{RESET}")
     sig = verify_signature()
@@ -832,6 +862,7 @@ def cmd_unlock() -> None:
     print(CLEAR)
     banner("· unlock")
     show_disclaimer()
+    print_app_management_warning()
 
     running_as_root = hasattr(os, "geteuid") and os.geteuid() == 0
     who = "root (sudo)" if running_as_root else "user"
@@ -850,8 +881,7 @@ def cmd_unlock() -> None:
     print()
     loader("Patching Seatbelt sandbox profiles…")
     print()
-    show_result(unlock_sandbox())
-    print()
+    handle_bundle_result(unlock_sandbox())
 
 
 def cmd_fix_path() -> None:
@@ -868,20 +898,20 @@ def cmd_sync_skills() -> None:
     print(CLEAR)
     banner("· sync-skills")
     show_disclaimer()
+    print_app_management_warning()
     loader("Copying AGY skills into Dia…", loops=3)
     print()
-    show_result(sync_skills())
-    print()
+    handle_bundle_result(sync_skills())
 
 
 def cmd_append_prompt() -> None:
     print(CLEAR)
     banner("· append-prompt")
     show_disclaimer()
+    print_app_management_warning()
     loader("Appending rules to chat-base.md…")
     print()
-    show_result(append_prompt_rules())
-    print()
+    handle_bundle_result(append_prompt_rules())
 
 
 def cmd_backup() -> None:
